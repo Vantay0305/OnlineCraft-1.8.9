@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OnlineCraft 1.8.9 – browser edition</title>
+  <style>
+    :root {
+      --ui-bg: rgba(0, 0, 0, 0.45);
+      --ui-border: rgba(255, 255, 255, 0.3);
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: #75b6ff;
+      color: #fff;
+      user-select: none;
+    }
+    #game {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+    #overlay {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      padding: 10px 12px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.35;
+      max-width: min(420px, calc(100vw - 24px));
+      backdrop-filter: blur(2px);
+    }
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 22px;
+      height: 22px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      opacity: 0.9;
+    }
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      background: #fff;
+      box-shadow: 0 0 2px #000;
+    }
+    #crosshair::before {
+      left: 10px;
+      top: 0;
+      width: 2px;
+      height: 22px;
+    }
+    #crosshair::after {
+      top: 10px;
+      left: 0;
+      width: 22px;
+      height: 2px;
+    }
+    #hotbar {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 6px;
+      padding: 8px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: 10px;
+    }
+    .slot {
+      width: 42px;
+      height: 42px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 1px 2px #000;
+      box-sizing: border-box;
+    }
+    .slot.active {
+      border-color: #fff;
+      transform: translateY(-2px);
+      box-shadow: 0 0 10px rgba(255,255,255,0.35);
+    }
+    #start {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.08), rgba(0,0,0,0.7));
+    }
+    #start button {
+      font-size: 20px;
+      padding: 14px 20px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.45);
+      background: linear-gradient(#4ba3ff, #2268c8);
+      color: white;
+      cursor: pointer;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="overlay">
+    <strong>OnlineCraft 1.8.9 (browser edition)</strong><br>
+    WASD move · Space jump · Shift descend (creative mode)<br>
+    Mouse look · Left click break · Right click place<br>
+    Keys 1-5 switch blocks · R toggles creative mode
+  </div>
+  <div id="crosshair"></div>
+  <div id="hotbar"></div>
+  <noscript>
+    <div id="overlay" style="top:auto;bottom:10px;max-width:520px;">
+      JavaScript is disabled. This demo needs JS enabled to render the world.
+    </div>
+  </noscript>
+  <div id="start"><button id="startBtn">Click to Play</button></div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const hotbar = document.getElementById('hotbar');
+    const start = document.getElementById('start');
+    const startBtn = document.getElementById('startBtn');
+
+    const BLOCKS = [
+      null,
+      { name: 'Grass', color: '#5fb14e', top: '#74cc5d', side: '#5fb14e' },
+      { name: 'Dirt', color: '#8b5a2b', top: '#9d6a39', side: '#8b5a2b' },
+      { name: 'Stone', color: '#8f9399', top: '#a7adb3', side: '#8f9399' },
+      { name: 'Wood', color: '#9b6a3b', top: '#b78146', side: '#9b6a3b' },
+      { name: 'Sand', color: '#d8c37c', top: '#e9d793', side: '#d8c37c' }
+    ];
+
+    const world = { w: 36, h: 18, d: 36, blocks: new Uint8Array(36 * 18 * 36) };
+    const idx = (x, y, z) => x + world.w * (z + world.d * y);
+    const inBounds = (x, y, z) => x >= 0 && z >= 0 && y >= 0 && x < world.w && z < world.d && y < world.h;
+    const getBlock = (x, y, z) => inBounds(x, y, z) ? world.blocks[idx(x, y, z)] : 0;
+    const setBlock = (x, y, z, v) => { if (inBounds(x, y, z)) world.blocks[idx(x, y, z)] = v; };
+
+    function heightAt(x, z) {
+      return Math.floor(6 + Math.sin(x * 0.28) * 1.8 + Math.cos(z * 0.23) * 1.8 + Math.sin((x + z) * 0.11) * 1.4);
+    }
+
+    function generateWorld() {
+      for (let x = 0; x < world.w; x++) {
+        for (let z = 0; z < world.d; z++) {
+          const h = Math.max(2, Math.min(world.h - 2, heightAt(x, z)));
+          for (let y = 0; y <= h; y++) {
+            let b = 3;
+            if (y === h) b = h < 6 ? 5 : 1;
+            else if (y > h - 3) b = 2;
+            setBlock(x, y, z, b);
+          }
+          if ((x * 19 + z * 13) % 47 === 0 && h + 4 < world.h) {
+            for (let y = h + 1; y <= h + 3; y++) setBlock(x, y, z, 4);
+            for (let lx = -1; lx <= 1; lx++) for (let lz = -1; lz <= 1; lz++) {
+              if (Math.abs(lx) + Math.abs(lz) < 3) setBlock(x + lx, h + 4, z + lz, 1);
+            }
+          }
+        }
+      }
+    }
+
+    const player = {
+      x: world.w / 2,
+      y: 13,
+      z: world.d / 2,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      yaw: 0,
+      pitch: 0,
+      onGround: false,
+      creative: false,
+      selected: 1
+    };
+
+    const keys = new Set();
+    const mouse = { dx: 0, dy: 0 };
+
+    const faces = [
+      { n: [ 1, 0, 0], v: [[1,0,0],[1,1,0],[1,1,1],[1,0,1]], shade: 0.86 },
+      { n: [-1, 0, 0], v: [[0,0,1],[0,1,1],[0,1,0],[0,0,0]], shade: 0.74 },
+      { n: [ 0, 1, 0], v: [[0,1,0],[0,1,1],[1,1,1],[1,1,0]], shade: 1.0, top: true },
+      { n: [ 0,-1, 0], v: [[0,0,1],[0,0,0],[1,0,0],[1,0,1]], shade: 0.58 },
+      { n: [ 0, 0, 1], v: [[1,0,1],[1,1,1],[0,1,1],[0,0,1]], shade: 0.93 },
+      { n: [ 0, 0,-1], v: [[0,0,0],[0,1,0],[1,1,0],[1,0,0]], shade: 0.8 }
+    ];
+
+    function resize() {
+      canvas.width = innerWidth;
+      canvas.height = innerHeight;
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+    function raycast(maxDist = 8, step = 0.05) {
+      const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+      const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw);
+      const dx = sy * cp, dy = sp, dz = cy * cp;
+      let px = player.x, py = player.y + 1.62, pz = player.z;
+      let prev = null;
+      for (let t = 0; t < maxDist; t += step) {
+        const x = Math.floor(px + dx * t);
+        const y = Math.floor(py + dy * t);
+        const z = Math.floor(pz + dz * t);
+        if (!inBounds(x, y, z)) continue;
+        if (getBlock(x, y, z)) {
+          return { hit: [x, y, z], place: prev };
+        }
+        prev = [x, y, z];
+      }
+      return null;
+    }
+
+    function updateHotbar() {
+      hotbar.innerHTML = '';
+      for (let i = 1; i <= 5; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'slot' + (player.selected === i ? ' active' : '');
+        slot.style.background = BLOCKS[i].color;
+        slot.textContent = i;
+        hotbar.appendChild(slot);
+      }
+    }
+
+    function tryMove(nx, ny, nz) {
+      const r = 0.28;
+      const minX = Math.floor(nx - r), maxX = Math.floor(nx + r);
+      const minZ = Math.floor(nz - r), maxZ = Math.floor(nz + r);
+      const minY = Math.floor(ny), maxY = Math.floor(ny + 1.8);
+      for (let x = minX; x <= maxX; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          for (let z = minZ; z <= maxZ; z++) {
+            if (getBlock(x, y, z)) return false;
+          }
+        }
+      }
+      player.x = nx; player.y = ny; player.z = nz;
+      return true;
+    }
+
+    function update(dt) {
+      const speed = player.creative ? 9.5 : 5.2;
+      const accel = 28 * dt;
+      const fwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+      const str = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+      const mag = Math.hypot(fwd, str) || 1;
+      const f = fwd / mag, s = str / mag;
+      const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw);
+      const tx = (sy * f + cy * s) * speed;
+      const tz = (cy * f - sy * s) * speed;
+
+      player.vx += (tx - player.vx) * accel;
+      player.vz += (tz - player.vz) * accel;
+
+      player.yaw += mouse.dx * 0.0022;
+      player.pitch = clamp(player.pitch - mouse.dy * 0.0022, -1.52, 1.52);
+      mouse.dx = mouse.dy = 0;
+
+      if (player.creative) {
+        const up = (keys.has('Space') ? 1 : 0) - (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1 : 0);
+        player.vy = up * speed;
+      } else {
+        player.vy -= 23 * dt;
+        if (player.onGround && keys.has('Space')) {
+          player.vy = 8.3;
+          player.onGround = false;
+        }
+      }
+
+      tryMove(player.x + player.vx * dt, player.y, player.z);
+      tryMove(player.x, player.y, player.z + player.vz * dt);
+
+      const prevY = player.y;
+      const movedY = tryMove(player.x, player.y + player.vy * dt, player.z);
+      if (!movedY) {
+        if (player.vy < 0) player.onGround = true;
+        player.vy = 0;
+      } else if (!player.creative && player.y < prevY) {
+        player.onGround = false;
+      }
+
+      player.x = clamp(player.x, 1, world.w - 2);
+      player.z = clamp(player.z, 1, world.d - 2);
+      player.y = clamp(player.y, 1, world.h - 3);
+    }
+
+    function transform(wx, wy, wz) {
+      let x = wx - player.x;
+      let y = wy - (player.y + 1.62);
+      let z = wz - player.z;
+
+      const sy = Math.sin(-player.yaw), cy = Math.cos(-player.yaw);
+      let tx = x * cy - z * sy;
+      let tz = x * sy + z * cy;
+      x = tx; z = tz;
+
+      const sp = Math.sin(-player.pitch), cp = Math.cos(-player.pitch);
+      let ty = y * cp - z * sp;
+      tz = y * sp + z * cp;
+      y = ty; z = tz;
+
+      return [x, y, z];
+    }
+
+    function shade(hex, s) {
+      const n = parseInt(hex.slice(1), 16);
+      const r = ((n >> 16) & 255) * s;
+      const g = ((n >> 8) & 255) * s;
+      const b = (n & 255) * s;
+      return `rgb(${r|0},${g|0},${b|0})`;
+    }
+
+    function render() {
+      if (!ctx) return;
+      const w = canvas.width, h = canvas.height;
+      const horizon = h * (0.52 + Math.sin(player.pitch) * 0.08);
+      const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+      sky.addColorStop(0, '#6fb8ff');
+      sky.addColorStop(1, '#c9ebff');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, horizon);
+      const ground = ctx.createLinearGradient(0, horizon, 0, h);
+      ground.addColorStop(0, '#6f9f5b');
+      ground.addColorStop(1, '#48653c');
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, horizon, w, h - horizon);
+
+      const f = Math.min(w, h) * 0.88;
+      const polys = [];
+      const r = 16;
+      const cx = Math.floor(player.x), cy = Math.floor(player.y), cz = Math.floor(player.z);
+
+      for (let y = Math.max(0, cy - r / 2); y < Math.min(world.h, cy + r / 2); y++) {
+        for (let z = Math.max(0, cz - r); z < Math.min(world.d, cz + r); z++) {
+          for (let x = Math.max(0, cx - r); x < Math.min(world.w, cx + r); x++) {
+            const b = getBlock(x, y, z);
+            if (!b) continue;
+            const block = BLOCKS[b];
+            for (const face of faces) {
+              const nx = x + face.n[0], ny = y + face.n[1], nz = z + face.n[2];
+              if (getBlock(nx, ny, nz)) continue;
+
+              const pts = [];
+              let visible = true;
+              let depth = 0;
+              for (const v of face.v) {
+                const [tx, ty, tz] = transform(x + v[0], y + v[1], z + v[2]);
+                if (tz <= 0.08) { visible = false; break; }
+                depth += tz;
+                pts.push([w / 2 + (tx / tz) * f, h / 2 + (ty / tz) * f]);
+              }
+              if (!visible) continue;
+
+              const color = face.top ? block.top : block.side;
+              polys.push({ pts, depth: depth / 4, color: shade(color, face.shade) });
+            }
+          }
+        }
+      }
+
+      polys.sort((a, b) => b.depth - a.depth);
+      for (const p of polys) {
+        ctx.beginPath();
+        ctx.moveTo(p.pts[0][0], p.pts[0][1]);
+        for (let i = 1; i < p.pts.length; i++) ctx.lineTo(p.pts[i][0], p.pts[i][1]);
+        ctx.closePath();
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.stroke();
+      }
+
+      const hit = raycast(8, 0.04);
+      if (hit?.hit) {
+        const [hx, hy, hz] = hit.hit;
+        drawSelectionBox(hx, hy, hz, f, w, h);
+      }
+    }
+
+    function drawSelectionBox(x, y, z, f, w, h) {
+      const verts = [
+        [x, y, z], [x+1, y, z], [x+1, y+1, z], [x, y+1, z],
+        [x, y, z+1], [x+1, y, z+1], [x+1, y+1, z+1], [x, y+1, z+1]
+      ];
+      const projected = verts.map(v => {
+        const [tx, ty, tz] = transform(v[0], v[1], v[2]);
+        if (tz <= 0.01) return null;
+        return [w / 2 + (tx / tz) * f, h / 2 + (ty / tz) * f];
+      });
+      if (projected.some(p => !p)) return;
+      const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (const [a, b] of edges) {
+        ctx.moveTo(projected[a][0], projected[a][1]);
+        ctx.lineTo(projected[b][0], projected[b][1]);
+      }
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    addEventListener('keydown', (e) => {
+      keys.add(e.code);
+      if (/Digit[1-5]/.test(e.code)) {
+        player.selected = Number(e.code.slice(-1));
+        updateHotbar();
+      }
+      if (e.code === 'KeyR') {
+        player.creative = !player.creative;
+      }
+    });
+    addEventListener('keyup', (e) => keys.delete(e.code));
+
+    canvas.addEventListener('click', () => {
+      if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+    });
+    addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement === canvas) {
+        mouse.dx += e.movementX;
+        mouse.dy += e.movementY;
+      }
+    });
+
+    addEventListener('mousedown', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      const hit = raycast(8, 0.04);
+      if (!hit) return;
+      if (e.button === 0) {
+        setBlock(...hit.hit, 0);
+      }
+    });
+
+    addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (document.pointerLockElement !== canvas) return;
+      const hit = raycast(8, 0.04);
+      if (!hit?.place) return;
+      const [x, y, z] = hit.place;
+      const px = Math.floor(player.x), py = Math.floor(player.y + 0.9), pz = Math.floor(player.z);
+      if (x === px && y === py && z === pz) return;
+      setBlock(x, y, z, player.selected);
+    });
+
+    startBtn.addEventListener('click', () => {
+      start.style.display = 'none';
+      canvas.requestPointerLock();
+    });
+
+    if (!ctx) {
+      start.style.display = 'none';
+      const warning = document.createElement('div');
+      warning.id = 'overlay';
+      warning.innerHTML = '<strong>Canvas not supported</strong><br>Your browser cannot render this single-file demo.';
+      document.body.appendChild(warning);
+    } else {
+      generateWorld();
+      updateHotbar();
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min(0.033, (now - last) / 1000);
+        last = now;
+        update(dt);
+        render();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    }
+  </script>
+</body>
+</html>
