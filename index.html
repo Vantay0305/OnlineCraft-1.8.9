@@ -68,6 +68,22 @@
       width: 22px;
       height: 2px;
     }
+    #targetHint {
+      position: fixed;
+      left: 50%;
+      bottom: 86px;
+      transform: translateX(-50%);
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255,255,255,0.25);
+      font-size: 12px;
+      letter-spacing: 0.2px;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      pointer-events: none;
+    }
+    #targetHint.visible { opacity: 1; }
     #hotbar {
       position: fixed;
       bottom: 18px;
@@ -125,6 +141,7 @@
     Keys 1-5 switch blocks · R toggles creative mode
   </div>
   <div id="crosshair"></div>
+  <div id="targetHint"></div>
   <div id="hotbar"></div>
   <noscript>
     <div id="overlay" style="top:auto;bottom:10px;max-width:520px;">
@@ -137,6 +154,7 @@
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const hotbar = document.getElementById('hotbar');
+    const targetHint = document.getElementById('targetHint');
     const start = document.getElementById('start');
     const startBtn = document.getElementById('startBtn');
 
@@ -274,7 +292,7 @@
       player.vx += (tx - player.vx) * accel;
       player.vz += (tz - player.vz) * accel;
 
-      player.yaw += mouse.dx * 0.0022;
+      player.yaw -= mouse.dx * 0.0022;
       player.pitch = clamp(player.pitch - mouse.dy * 0.0022, -1.52, 1.52);
       mouse.dx = mouse.dy = 0;
 
@@ -335,7 +353,7 @@
     function render() {
       if (!ctx) return;
       const w = canvas.width, h = canvas.height;
-      const horizon = h * (0.52 + Math.sin(player.pitch) * 0.08);
+      const horizon = h * (0.52 - Math.sin(player.pitch) * 0.08);
       const sky = ctx.createLinearGradient(0, 0, 0, horizon);
       sky.addColorStop(0, '#6fb8ff');
       sky.addColorStop(1, '#c9ebff');
@@ -369,7 +387,7 @@
                 const [tx, ty, tz] = transform(x + v[0], y + v[1], z + v[2]);
                 if (tz <= 0.08) { visible = false; break; }
                 depth += tz;
-                pts.push([w / 2 + (tx / tz) * f, h / 2 + (ty / tz) * f]);
+                pts.push([w / 2 + (tx / tz) * f, h / 2 - (ty / tz) * f]);
               }
               if (!visible) continue;
 
@@ -396,6 +414,10 @@
       if (hit?.hit) {
         const [hx, hy, hz] = hit.hit;
         drawSelectionBox(hx, hy, hz, f, w, h);
+        targetHint.textContent = `Target: ${BLOCKS[getBlock(hx, hy, hz)].name} · LMB break · RMB place`;
+        targetHint.classList.add('visible');
+      } else {
+        targetHint.classList.remove('visible');
       }
     }
 
@@ -407,7 +429,7 @@
       const projected = verts.map(v => {
         const [tx, ty, tz] = transform(v[0], v[1], v[2]);
         if (tz <= 0.01) return null;
-        return [w / 2 + (tx / tz) * f, h / 2 + (ty / tz) * f];
+        return [w / 2 + (tx / tz) * f, h / 2 - (ty / tz) * f];
       });
       if (projected.some(p => !p)) return;
       const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
